@@ -1,0 +1,39 @@
+# Example values for an OpenShell Gateway on OpenShift.
+# Copy this file and replace the OIDC issuer before installing the chart.
+
+replicaCount: 1
+
+# This must be unique cluster-wide because the chart creates ClusterRoles and
+# ClusterRoleBindings from it. The guide overrides it at install time.
+fullnameOverride: replace-me
+
+workload:
+  kind: statefulset
+
+# OpenShift assigns allowed IDs from the namespace SCC range. Do not force the
+# chart's default UID or fsGroup values.
+podSecurityContext:
+  fsGroup: null
+
+securityContext:
+  runAsUser: null
+
+server:
+  # Keep this equal to the installation namespace. The guide overrides it at
+  # install time.
+  sandboxNamespace: replace-me
+  workspaceDefaultStorageSize: 2Gi
+
+  # Keep the Gateway cluster-internal. The Dashboard is the public HTTPS entry
+  # point, and OIDC protects requests forwarded to this plaintext gRPC service.
+  disableTls: true
+
+  auth:
+    allowUnauthenticatedUsers: false
+
+  oidc:
+    issuer: https://idp.example.com/realms/openshell
+    audience: openshell-cli
+    rolesClaim: roles
+    adminRole: openshell-admin
+    userRole: openshell-user

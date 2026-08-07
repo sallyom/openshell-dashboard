@@ -1,0 +1,168 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: openshell-dashboard
+  annotations:
+    description: OpenShell Dashboard with OIDC authentication and an OpenShift Route
+parameters:
+  - name: NAMESPACE
+    description: Namespace containing the OpenShell Gateway and Dashboard
+    required: true
+  - name: DASHBOARD_IMAGE
+    description: Published OpenShell Dashboard image, preferably pinned by digest
+    required: true
+  - name: GATEWAY_URL
+    description: Cluster-internal OpenShell Gateway gRPC endpoint
+    required: true
+  - name: ROUTE_HOST
+    description: Fully qualified public hostname for the Dashboard Route
+    required: true
+  - name: OIDC_ISSUER
+    description: OIDC issuer URL used by both Dashboard and Gateway
+    required: true
+  - name: OIDC_CLIENT_ID
+    description: Installation-specific OIDC client configured for Authorization Code with PKCE
+    required: true
+  - name: OIDC_SCOPES
+    description: Space-separated OIDC scopes supported by the identity provider
+    value: openid profile email
+  - name: ADMIN_ROLE
+    description: OIDC role granting OpenShell platform administration
+    value: openshell-admin
+  - name: USER_ROLE
+    description: OIDC role granting regular OpenShell access
+    value: openshell-user
+  - name: SESSION_SECRET_NAME
+    description: Existing Secret containing the Dashboard session encryption key
+    value: openshell-dashboard-session
+objects:
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: openshell-dashboard
+      namespace: ${NAMESPACE}
+      labels:
+        app.kubernetes.io/name: openshell-dashboard
+        app.kubernetes.io/part-of: openshell
+    spec:
+      replicas: 1
+      revisionHistoryLimit: 2
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: openshell-dashboard
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openshell-dashboard
+            app.kubernetes.io/part-of: openshell
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: dashboard
+              image: ${DASHBOARD_IMAGE}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PORT
+                  value: "8080"
+                - name: STATIC_DIR
+                  value: /srv/static
+                - name: OPENSHELL_GATEWAY_URL
+                  value: ${GATEWAY_URL}
+                - name: AUTH_DISABLED
+                  value: "false"
+                - name: OIDC_ISSUER
+                  value: ${OIDC_ISSUER}
+                - name: OIDC_CLIENT_ID
+                  value: ${OIDC_CLIENT_ID}
+                - name: OIDC_SCOPES
+                  value: ${OIDC_SCOPES}
+                - name: SESSION_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: ${SESSION_SECRET_NAME}
+                      key: session-secret
+                - name: ADMIN_ROLE
+                  value: ${ADMIN_ROLE}
+                - name: OIDC_USER_ROLE
+                  value: ${USER_ROLE}
+                - name: ALLOWED_ORIGINS
+                  value: https://${ROUTE_HOST}
+              ports:
+                - name: http
+                  containerPort: 8080
+                  protocol: TCP
+              startupProbe:
+                httpGet:
+                  path: /api/v1/healthz
+                  port: http
+                periodSeconds: 2
+                failureThreshold: 30
+              livenessProbe:
+                httpGet:
+                  path: /api/v1/healthz
+                  port: http
+                periodSeconds: 10
+                timeoutSeconds: 2
+                failureThreshold: 3
+              readinessProbe:
+                httpGet:
+                  path: /api/v1/readyz
+                  port: http
+                periodSeconds: 5
+                timeoutSeconds: 2
+                failureThreshold: 3
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                readOnlyRootFilesystem: true
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: openshell-dashboard
+      namespace: ${NAMESPACE}
+      labels:
+        app.kubernetes.io/name: openshell-dashboard
+        app.kubernetes.io/part-of: openshell
+    spec:
+      selector:
+        app.kubernetes.io/name: openshell-dashboard
+      ports:
+        - name: http
+          port: 8080
+          targetPort: http
+          protocol: TCP
+  - apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: openshell-dashboard
+      namespace: ${NAMESPACE}
+      labels:
+        app.kubernetes.io/name: openshell-dashboard
+        app.kubernetes.io/part-of: openshell
+      annotations:
+        haproxy.router.openshift.io/timeout: 1h
+    spec:
+      host: ${ROUTE_HOST}
+      to:
+        kind: Service
+        name: openshell-dashboard
+        weight: 100
+      port:
+        targetPort: http
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+      wildcardPolicy: None
